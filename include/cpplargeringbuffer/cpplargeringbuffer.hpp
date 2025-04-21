@@ -1,10 +1,10 @@
 // cpplargeringbuffer - A simple C++ large ring buffer implementation
 // Link: https://github.com/squeakycode/cpplargeringbuffer
-// Version: 1.0.0
+// Version: 1.1.0
 // Minimum required C++ Standard: C++11
 // License: BSD 3-Clause License
 // 
-// Copyright (c) 2024, Andreas Gau
+// Copyright (c) 2024-2025, Andreas Gau
 // 
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -143,6 +143,15 @@ namespace cpplargeringbuffer
 
         /**
             \brief Constructs a ring buffer object and configures it's size parameters.
+            \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
+        */
+        explicit large_ring_buffer(size_t maximum_number_of_items)
+        {
+            change_configuration(maximum_number_of_items);
+        }
+
+        /**
+            \brief Constructs a ring buffer object and configures it's size parameters.
             \param[in] number_of_segments    The ring buffer is structured in to number_of_segments that are allocated as the ring buffer is filled.
             \param[in] segment_size          The size of a segment in number of items stored.
                                              All items are constructed and destroyed at the same time when needed.
@@ -155,9 +164,147 @@ namespace cpplargeringbuffer
         }
 
         /**
+            \brief Constructs a ring buffer object and configures it's size parameters.
+            \param[in] number_of_segments    The ring buffer is structured in to number_of_segments that are allocated as the ring buffer is filled.
+                                             This value is automatically determined from maximum_number_of_items if set to 0.
+            \param[in] segment_size          The size of a segment in number of items stored.
+                                             All items are constructed and destroyed at the same time when needed.
+            \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
+                                               This number can be smaller than number_of_segments * segment_size.
+            \param[in] fixed_segment_allocation If set to true ringbuffer segments used for storing items are not freed when items are removed.
+            \param[in] preallocate_segments If set to true ringbuffer segments used for storing items are allocated when the ringbuffer size parameters are configured.
+
+            number_of_segments * segment_size can be used to compute the number of items that can be stored.
+        */
+        large_ring_buffer(size_t number_of_segments, size_t segment_size, size_t maximum_number_of_items, bool fixed_segment_allocation = false, bool preallocate_segments = false)
+        {
+            discard_and_change_configuration(number_of_segments, segment_size, maximum_number_of_items, fixed_segment_allocation, preallocate_segments);
+        }
+
+        /**
             \brief Destroys a ring buffer object.
         */
         ~large_ring_buffer() = default;
+
+
+        /**
+            \brief Reconfigures the size parameters.
+            \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
+                                               This number can be smaller than number_of_segments * segment_size.
+            \param[in] fixed_segment_allocation If set to true ringbuffer segments used for storing items are not freed when items are removed.
+            \param[in] preallocate_segments If set to true ringbuffer segments used for storing items are allocated when the ringbuffer size parameters are configured.
+
+
+            If maximum_number_of_items is smaller than the number of stored items excess items are removed from the back.
+            If the segment size has not been configured this is done automatically.
+            The size parameters are changed and the number segments of the ringbuffer are adjusted accordingly.
+        */
+        void change_configuration(size_t maximum_number_of_items, bool fixed_segment_allocation = false, bool preallocate_segments = false)
+        {
+            //remove items exceeding the new maximum number of items
+            while (maximum_number_of_items < m_current_num_items)
+            {
+                pop_back();
+            }
+
+            //determine a segment size if none exists yet
+            size_t new_segment_size = m_segment_size;
+            if (new_segment_size == 0)
+            {
+                constexpr size_t sizeInByteLimit = 1024 * 1024;
+                new_segment_size = 10;
+                if (maximum_number_of_items >= 100000000 && ((sizeof(value_type) * 10000) <= sizeInByteLimit))
+                {
+                    new_segment_size = 10000;
+                }
+                else if (maximum_number_of_items >= 1000000 && ((sizeof(value_type) * 1000) <= sizeInByteLimit))
+                {
+                    new_segment_size = 1000;
+                }
+                else if (maximum_number_of_items >= 10000 && ((sizeof(value_type) * 100) <= sizeInByteLimit))
+                {
+                    new_segment_size = 100;
+                }
+            }
+
+            //compute the new number of segments needed
+            size_t new_number_of_segments = maximum_number_of_items / new_segment_size + ((maximum_number_of_items % new_segment_size) ? 1 : 0);
+
+            //adjust segments
+            if (new_number_of_segments != m_segments.size() || (m_fixed_segment_allocation != fixed_segment_allocation))
+            {
+                if (new_number_of_segments == 0)
+                {
+                    //configured storage capacity is zero
+                    std::vector< std::vector<value_type> > new_segments;
+                    m_segments.swap(new_segments);
+                    m_start_index = 0;
+                    m_end_index = 0;
+                }
+                else if (m_segments.empty())
+                {
+                    //from empty to new capacity
+                    m_segments.resize(new_number_of_segments);
+                    m_start_index = 0;
+                    m_end_index = 0;
+                }
+                else
+                {
+                    //changed number of allocated segments; same segment size; move existing segments for new configuration
+                    assert(new_segment_size == m_segment_size);
+
+                    //prepare new segment container
+                    std::vector< std::vector<value_type> > new_segments;
+                    new_segments.resize(new_number_of_segments);
+                    size_t new_segment_index = 0;
+
+                    //move segments with held items
+                    if (m_current_num_items)
+                    {
+                        size_t segment_index = m_start_index / new_segment_size;
+                        size_t segment_index_end = m_end_index / new_segment_size;
+                        for (;;)
+                        {
+                            new_segments[new_segment_index].swap(m_segments[segment_index]);
+                            ++new_segment_index;
+                            if (segment_index == segment_index_end)
+                            {
+                                break;
+                            }
+                            ++segment_index;
+                            if (segment_index >= m_segments.size())
+                            {
+                                segment_index = 0;
+                            }
+                        }
+                    }
+                    if (fixed_segment_allocation)
+                    {
+                        //keep old unused segments
+                        for (auto& segment : m_segments)
+                        {
+                            if (new_segment_index >= new_segments.size())
+                            {
+                                break;
+                            }
+                            new_segments[new_segment_index].swap(segment);
+                            ++new_segment_index;
+                        }
+                    }
+                    m_segments.swap(new_segments);
+                    m_start_index = m_start_index % new_segment_size;
+                    m_end_index = m_start_index + m_current_num_items;
+                }
+            }
+            m_fixed_segment_allocation = fixed_segment_allocation;
+            m_max_num_items = maximum_number_of_items;
+            m_segment_size = new_segment_size;
+            m_max_size =  new_segment_size * new_number_of_segments;
+            if (preallocate_segments)
+            {
+                this->preallocate_segments();
+            }
+        }
 
         /**
             \brief Clears a ring buffer object.
@@ -167,18 +314,20 @@ namespace cpplargeringbuffer
         */
         void clear()
         {
-            const size_t item_count = size();
-            for (size_t i = 0; i < item_count; ++i)
+            while (m_current_num_items)
             {
-                pop_front();
+                pop_back();
             }
 
-            for (auto& segment : m_segments)
+            if (!m_fixed_segment_allocation)
             {
-                //completely remove the segment and free the memory
-                segment.clear();
-                std::vector<value_type> temp;
-                segment.swap(temp);
+                for (auto& segment : m_segments)
+                {
+                    //completely remove the segment and free the memory
+                    segment.clear();
+                    std::vector<value_type> temp;
+                    segment.swap(temp);
+                }
             }
         }
 
@@ -188,27 +337,15 @@ namespace cpplargeringbuffer
         */
         size_t size() const
         {
-            size_t result = 0;
-            if (m_end_index == m_start_index)
+            if (m_end_index > m_start_index)
             {
-                if (m_full)
-                {
-                    result = m_max_size;
-                }
-                else
-                {
-                    result = 0;
-                }
+                assert( m_current_num_items == (m_end_index - m_start_index));
             }
-            else if (m_end_index >= m_start_index)
+            else if (m_end_index < m_start_index)
             {
-                result = m_end_index - m_start_index;
+                assert(m_current_num_items == ((m_max_size - m_start_index) + m_end_index));
             }
-            else
-            {
-                result = (m_max_size - m_start_index) + m_end_index;
-            }
-            return result;
+            return m_current_num_items;
         }
 
         /**
@@ -217,7 +354,7 @@ namespace cpplargeringbuffer
         */
         bool empty() const
         {
-            return !m_full && m_end_index == m_start_index;
+            return m_current_num_items == 0;
         }
 
         /**
@@ -226,7 +363,7 @@ namespace cpplargeringbuffer
         */
         bool full() const
         {
-            return m_full;
+            return m_max_size && m_current_num_items == m_max_num_items;
         }
 
         /**
@@ -235,7 +372,7 @@ namespace cpplargeringbuffer
         */
         size_t get_max_size() const
         {
-            return m_max_size;
+            return m_max_num_items;
         }
 
         /**
@@ -277,13 +414,22 @@ namespace cpplargeringbuffer
             return result;
         }
 
+
         /**
-            \brief Destroyes all stored objects and configures the size parameters.
+            \brief Returns true if segment allocation stays fixed and segments are not removed when items are removed.
+            \return Returns true if segment allocation stays fixed.
+        */
+        bool get_fixed_segment_allocation() const
+        {
+            return m_fixed_segment_allocation;
+        }
+
+        /**
+            \brief Destroys all stored objects and configures the size parameters.
             \param[in] number_of_segments    The ring buffer is structured in to number_of_segments that are allocated as the ring buffer is filled.
             \param[in] segment_size          The size of a segment in number of items stored.
                                              All items are constructed and destroyed at the same time when needed.
 
-            number_of_segments * segment_size can be used to compute the number of items that can be stored.
             \post
             - All items stored are destroyed.
             - Clear is not called on the items.
@@ -291,21 +437,62 @@ namespace cpplargeringbuffer
         */
         void discard_and_change_configuration(size_t number_of_segments, size_t segment_size)
         {
+            discard_and_change_configuration(number_of_segments,
+                (number_of_segments == 0 ? 0 : segment_size), // keep behavior of version 1.0
+                number_of_segments * segment_size,
+                false,
+                false
+            );
+        }
+
+        /**
+            \brief Destroys all stored objects and configures the size parameters.
+            \param[in] number_of_segments    The ring buffer is structured in to number_of_segments that are allocated as the ring buffer is filled.
+                                             This value is automatically determined from maximum_number_of_items if set to 0.
+            \param[in] segment_size          The size of a segment in number of items stored.
+                                             All items are constructed and destroyed at the same time when needed.
+            \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
+                                               This number can be smaller than number_of_segments * segment_size.
+            \param[in] fixed_segment_allocation If set to true ringbuffer segments used for storing items are not freed when items are removed.
+            \param[in] preallocate_segments If set to true ringbuffer segments used for storing items are allocated when the ringbuffer size parameters are configured.
+
+            \post
+            - All items stored are destroyed.
+            - Clear is not called on the items.
+            - The new configuration is applied.
+        */
+        void discard_and_change_configuration(size_t number_of_segments, size_t segment_size, size_t maximum_number_of_items, bool fixed_segment_allocation = false, bool preallocate_segments = false)
+        {
             m_segments.clear();
             m_start_index = 0;
             m_end_index = 0;
+            m_max_num_items = 0;
+            m_current_num_items = 0;
             m_max_size = 0;
             m_segment_size = 0;
-            m_full = false;
-            if (number_of_segments == 0 || segment_size == 0)
+            m_fixed_segment_allocation = fixed_segment_allocation;
+            if (segment_size == 0 || maximum_number_of_items == 0)
             {
                 //nothing to do here; usable size will be zero
             }
             else
             {
+                if (number_of_segments == 0)
+                {
+                    number_of_segments = maximum_number_of_items / segment_size + ((maximum_number_of_items % segment_size) ? 1 : 0);
+                }
+                if (maximum_number_of_items > number_of_segments * segment_size)
+                {
+                    throw std::invalid_argument("The number of items exceeds the configured storage capacity.");
+                }
                 m_segment_size = segment_size;
                 m_segments.resize(number_of_segments);
                 m_max_size = number_of_segments * segment_size;
+                m_max_num_items = maximum_number_of_items;
+                if (preallocate_segments)
+                {
+                    this->preallocate_segments();
+                }
             }
         }
 
@@ -339,9 +526,9 @@ namespace cpplargeringbuffer
         */
         value_type& at(size_t index)
         {
-            if (index >= size())
+            if (index >= m_current_num_items)
             {
-                throw std::range_error("Ringbuffer index out of bounds.");
+                throw std::range_error("Ring buffer index out of bounds.");
             }
             size_t internal_index = to_internal_index(index);
             return get_item(internal_index);
@@ -355,9 +542,9 @@ namespace cpplargeringbuffer
         */
         const value_type& at(size_t index) const
         {
-            if (index >= size())
+            if (index >= m_current_num_items)
             {
-                throw std::range_error("Ringbuffer index out of bounds.");
+                throw std::range_error("Ring buffer index out of bounds.");
             }
             size_t internal_index = to_internal_index(index);
             return get_item(internal_index);
@@ -370,7 +557,7 @@ namespace cpplargeringbuffer
         */
         value_type& extend_back()
         {
-            if (m_full)
+            if (m_current_num_items == m_max_size)
             {
                 value_type& item = get_item(m_start_index /*start will be overwritten*/);
                 clear_handler_type::clear(item);
@@ -382,7 +569,17 @@ namespace cpplargeringbuffer
             {
                 increment_end_index();
                 value_type& item = get_item(before_end_index());
-                m_full = (m_start_index == m_end_index);
+                if (m_current_num_items == m_max_num_items)
+                {
+                    // pop_front
+                    clear_handler_type::clear(get_item(m_start_index));
+                    increment_start_index();
+                }
+                else
+                {
+                    assert(m_current_num_items < m_max_num_items);
+                    ++m_current_num_items;
+                }
                 return item;
             }
         }
@@ -394,7 +591,7 @@ namespace cpplargeringbuffer
         */
         value_type& extend_front()
         {
-            if (m_full)
+            if (m_current_num_items == m_max_size)
             {
                 value_type& item = get_item(before_end_index() /*end will be overwritten*/);
                 clear_handler_type::clear(item);
@@ -406,7 +603,17 @@ namespace cpplargeringbuffer
             {
                 decrement_start_index();
                 value_type& item = get_item(m_start_index);
-                m_full = (m_start_index == m_end_index);
+                if (m_current_num_items == m_max_num_items)
+                {
+                    //pop_back
+                    clear_handler_type::clear(get_item(before_end_index()));
+                    decrement_end_index();
+                }
+                else
+                {
+                    assert(m_current_num_items < m_max_num_items);
+                    ++m_current_num_items;
+                }
                 return item;
             }
         }
@@ -417,11 +624,11 @@ namespace cpplargeringbuffer
         */
         void pop_back()
         {
-            assert(!empty());
+            assert(m_current_num_items > 0);
             clear_handler_type::clear(get_item(before_end_index()));
             decrement_end_index();
-            m_full = false;
-            if (is_end_at_start_of_segment()) //went to next segment
+            --m_current_num_items;
+            if (!m_fixed_segment_allocation && is_end_at_start_of_segment()) //went to next segment
             {
                 remove_unused_segments_back();
             }
@@ -433,11 +640,11 @@ namespace cpplargeringbuffer
         */
         void pop_front()
         {
-            assert(!empty());
+            assert(m_current_num_items > 0);
             clear_handler_type::clear(get_item(m_start_index));
             increment_start_index();
-            m_full = false;
-            if (is_start_at_start_of_segment()) //went to next segment
+            --m_current_num_items;
+            if (!m_fixed_segment_allocation && is_start_at_start_of_segment()) //went to next segment
             {
                 remove_unused_segments_front();
             }
@@ -449,7 +656,7 @@ namespace cpplargeringbuffer
         */
         value_type& back()
         {
-            assert(!empty());
+            assert(m_current_num_items > 0);
             value_type& result = get_item(before_end_index());
             return result;
         }
@@ -460,7 +667,7 @@ namespace cpplargeringbuffer
         */
         value_type& front()
         {
-            assert(!empty());
+            assert(m_current_num_items > 0);
             value_type& result = get_item(m_start_index);
             return result;
         }
@@ -471,8 +678,9 @@ namespace cpplargeringbuffer
         */
         const value_type& back() const
         {
-            assert(!empty());
-            value_type& result = get_item(before_end_index());
+            assert(m_current_num_items > 0);
+            const value_type& result = get_item(before_end_index());
+            return result;
         }
 
         /**
@@ -481,8 +689,9 @@ namespace cpplargeringbuffer
         */
         const value_type& front() const
         {
-            assert(!empty());
-            value_type& result = get_item(m_start_index);
+            assert(m_current_num_items > 0);
+            const value_type& result = get_item(m_start_index);
+            return result;
         }
 
         /**
@@ -584,7 +793,7 @@ namespace cpplargeringbuffer
             return result;
         }
 
-        void decrement_segment_start(size_t& segment_start, size_t segment_count) const
+        static void decrement_segment_start(size_t& segment_start, size_t segment_count)
         {
             if (segment_start == 0)
             {
@@ -596,7 +805,7 @@ namespace cpplargeringbuffer
             }
         }
 
-        void increment_segment_end(size_t& segment_end, size_t segment_count) const
+        static void increment_segment_end(size_t& segment_end, size_t segment_count)
         {
             ++segment_end;
             if (segment_end == segment_count)
@@ -605,7 +814,7 @@ namespace cpplargeringbuffer
             }
         }
 
-        bool can_remove_segments()
+        bool can_remove_segments() const
         {
             size_t count_unused = m_max_size - size();
             bool result = count_unused > m_segment_size;
@@ -682,11 +891,24 @@ namespace cpplargeringbuffer
             return m_segments[segment_index][item_index];
         }
 
+        void preallocate_segments()
+        {
+            for (auto& segment : m_segments)
+            {
+                if (segment.size() != m_segment_size)
+                {
+                    segment.resize(m_segment_size);
+                }
+            }
+        }
+
         std::vector< std::vector<value_type> > m_segments;
         size_t m_start_index = 0;
         size_t m_end_index = 0;
-        bool m_full = false; // if m_start_index == m_end_index indicates either full or empty that's why we need this flag
+        size_t m_max_num_items = 0;
+        size_t m_current_num_items = 0;
         size_t m_segment_size = 0;
         size_t m_max_size = 0;
+        bool m_fixed_segment_allocation = false;
     };
 }

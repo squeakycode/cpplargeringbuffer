@@ -14,6 +14,7 @@ TEST_CASE("large_ring_buffer defaults", "[large_ring_buffer]")
     CHECK(testee.get_segment_size() == 0);
     CHECK(testee.get_segment_count() == 0);
     CHECK(testee.get_used_segments() == 0);
+    CHECK(testee.get_fixed_segment_allocation() == false);
     CHECK_NOTHROW(testee.clear());
 }
 
@@ -28,11 +29,14 @@ TEST_CASE("large_ring_buffer defaults const", "[large_ring_buffer]")
     CHECK(testee.get_segment_size() == 0);
     CHECK(testee.get_segment_count() == 0);
     CHECK(testee.get_used_segments() == 0);
+    CHECK(testee.get_fixed_segment_allocation() == false);
 }
 
 TEST_CASE("large_ring_buffer single item ring buffer back", "[large_ring_buffer]")
 {
     cpplargeringbuffer::large_ring_buffer<int> testee(1, 1);
+    const cpplargeringbuffer::large_ring_buffer<int>& ctestee = testee;
+
     CHECK(testee.empty());
     CHECK(!testee.full());
     CHECK(testee.size() == 0);
@@ -40,6 +44,7 @@ TEST_CASE("large_ring_buffer single item ring buffer back", "[large_ring_buffer]
     CHECK(testee.get_segment_size() == 1);
     CHECK(testee.get_segment_count() == 1);
     CHECK(testee.get_used_segments() == 0);
+    CHECK(testee.get_fixed_segment_allocation() == false);
     CHECK_NOTHROW(testee.clear());
 
     testee.push_back(1);
@@ -48,6 +53,15 @@ TEST_CASE("large_ring_buffer single item ring buffer back", "[large_ring_buffer]
     CHECK(testee.size() == 1);
     CHECK(testee.front() == 1);
     CHECK(testee.back() == 1);
+    CHECK(testee.at(0) == 1);
+    CHECK(testee[0] == 1);
+    CHECK(!ctestee.empty());
+    CHECK(ctestee.full());
+    CHECK(ctestee.size() == 1);
+    CHECK(ctestee.front() == 1);
+    CHECK(ctestee.back() == 1);
+    CHECK(ctestee.at(0) == 1);
+    CHECK(ctestee[0] == 1);
 
     testee.push_back(2);
     CHECK(!testee.empty());
@@ -106,6 +120,8 @@ TEST_CASE("large_ring_buffer single item ring buffer front", "[large_ring_buffer
     CHECK(testee.size() == 1);
     CHECK(testee.front() == 1);
     CHECK(testee.back() == 1);
+
+    CHECK_THROWS_AS(testee.at(2), std::range_error);
 }
 
 template <typename testee_type>
@@ -594,4 +610,272 @@ TEST_CASE("large_ring_buffer fill back 2", "[large_ring_buffer]")
         testee.push_back(i);
     }
     checkValueRange(testee, testee.get_max_size() + testee.get_segment_size(), testee.get_max_size());
+}
+
+inline void test_container_operation(cpplargeringbuffer::large_ring_buffer<size_t>& testee)
+{
+    const size_t max_value = 2 * testee.get_max_size() + testee.get_segment_size();
+
+    for (size_t i = 0; i < max_value; ++i)
+    {
+        testee.push_front(i);
+        testee.pop_front();
+        testee.push_back(i);
+        testee.extend_back() = i;
+        testee.pop_back();
+    }
+    checkValueRange(testee, testee.get_max_size() + testee.get_segment_size() + 1, testee.get_max_size() - 1);
+}
+
+TEST_CASE("large_ring_buffer configure 2", "[large_ring_buffer]")
+{
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(200);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 20);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+        test_container_operation(testee);
+        CHECK(testee.get_used_segments() == 20);
+        for (int i = 0; i < 50; ++i)
+        {
+            testee.pop_front();
+        }
+        CHECK(testee.get_used_segments() == 17);
+        testee.clear();
+        CHECK(testee.get_used_segments() == 0);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(0, 10, 200, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 20);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+        test_container_operation(testee);
+        CHECK(testee.get_used_segments() == 20);
+        for (int i = 0; i < 50; ++i)
+        {
+            testee.pop_front();
+        }
+        CHECK(testee.get_used_segments() == 20);
+        testee.clear();
+        CHECK(testee.get_used_segments() == 20);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(0, 10, 200, false, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 20);
+        CHECK(testee.get_used_segments() == 20);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(8, 2, 10, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 10);
+        CHECK(testee.get_segment_size() == 2);
+        CHECK(testee.get_segment_count() == 8);
+        CHECK(testee.get_used_segments() == 8);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+        test_container_operation(testee);
+    }
+}
+
+inline void test_fill(cpplargeringbuffer::large_ring_buffer<size_t>& testee, size_t offset, size_t count)
+{
+    for (size_t i = 0; i < offset; ++i)
+    {
+        testee.push_back(42);
+    }
+    for (size_t i = 0; i < count; ++i)
+    {
+        testee.push_back(i);
+    }
+    const size_t remove_offset_count = testee.size() - count;
+    for (size_t i = 0; i < remove_offset_count; ++i)
+    {
+        testee.pop_front();
+    }
+}
+
+inline void test_clear(cpplargeringbuffer::large_ring_buffer<size_t>& testee)
+{
+    while (!testee.empty())
+    {
+        testee.pop_back();
+    }
+}
+
+TEST_CASE("large_ring_buffer change_configuration", "[large_ring_buffer]")
+{
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee;
+        CHECK_THROWS_AS(testee.discard_and_change_configuration(1, 20, 500), std::invalid_argument);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(200);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 20);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+
+        testee.change_configuration(110);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 110);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 11);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+
+        testee.change_configuration(300);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 300);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 30);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(20000);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 20000);
+        CHECK(testee.get_segment_size() == 100);
+        CHECK(testee.get_used_segments() == 0);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(2000000);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 2000000);
+        CHECK(testee.get_segment_size() == 1000);
+        CHECK(testee.get_used_segments() == 0);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(200000000);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200000000);
+        CHECK(testee.get_segment_size() == 10000);
+        CHECK(testee.get_used_segments() == 0);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee;
+        testee.change_configuration(200, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 200);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 20);
+        CHECK(testee.get_used_segments() == 20);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+
+        testee.change_configuration(110, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 110);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 11);
+        CHECK(testee.get_used_segments() == 11);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+
+        testee.change_configuration(300, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 300);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 30);
+        CHECK(testee.get_used_segments() == 30);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+
+        testee.change_configuration(0, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 0);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 0);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+
+        testee.change_configuration(103, false, false);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 103);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 11);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+        test_container_operation(testee);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee;
+        testee.change_configuration(198, true, true);
+        test_fill(testee, 0, 105);
+        checkValueRange(testee, 0, 105);
+        size_t* a = &testee.front();
+        size_t* b = &testee.back();
+        CHECK(testee.get_used_segments() == 20);
+        testee.change_configuration(145, true, true);
+        CHECK(testee.get_used_segments() == 15);
+        CHECK(a == &testee.front());
+        CHECK(b == &testee.back());
+        checkValueRange(testee, 0, 105);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee;
+        testee.change_configuration(198, true, true);
+        test_fill(testee, 33, 105);
+        checkValueRange(testee, 0, 105);
+        size_t* a = &testee.front();
+        size_t* b = &testee.back();
+        CHECK(testee.get_used_segments() == 20);
+        testee.change_configuration(145, true, true);
+        CHECK(testee.get_used_segments() == 15);
+        CHECK(a == &testee.front());
+        CHECK(b == &testee.back());
+        checkValueRange(testee, 0, 105);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee;
+        testee.change_configuration(198, true, true);
+        test_fill(testee, 133, 105);
+        checkValueRange(testee, 0, 105);
+        size_t* a = &testee.front();
+        size_t* b = &testee.back();
+        CHECK(testee.get_used_segments() == 20);
+        testee.change_configuration(145, true, true);
+        CHECK(testee.get_used_segments() == 15);
+        CHECK(a == &testee.front());
+        CHECK(b == &testee.back());
+        checkValueRange(testee, 0, 105);
+    }
 }
