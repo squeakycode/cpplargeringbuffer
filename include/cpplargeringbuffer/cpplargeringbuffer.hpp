@@ -169,6 +169,7 @@ namespace cpplargeringbuffer
                                              This value is automatically determined from maximum_number_of_items if set to 0.
             \param[in] segment_size          The size of a segment in number of items stored.
                                              All items are constructed and destroyed at the same time when needed.
+                                             This value is automatically determined from maximum_number_of_items if set to 0.
             \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
                                                This number can be smaller than number_of_segments * segment_size.
             \param[in] fixed_segment_allocation If set to true ringbuffer segments used for storing items are not freed when items are removed.
@@ -211,20 +212,7 @@ namespace cpplargeringbuffer
             size_t new_segment_size = m_segment_size;
             if (new_segment_size == 0)
             {
-                constexpr size_t sizeInByteLimit = 1024 * 1024;
-                new_segment_size = 10;
-                if (maximum_number_of_items >= 100000000 && ((sizeof(value_type) * 10000) <= sizeInByteLimit))
-                {
-                    new_segment_size = 10000;
-                }
-                else if (maximum_number_of_items >= 1000000 && ((sizeof(value_type) * 1000) <= sizeInByteLimit))
-                {
-                    new_segment_size = 1000;
-                }
-                else if (maximum_number_of_items >= 10000 && ((sizeof(value_type) * 100) <= sizeInByteLimit))
-                {
-                    new_segment_size = 100;
-                }
+                new_segment_size = determine_segment_size(maximum_number_of_items);
             }
 
             //compute the new number of segments needed
@@ -434,6 +422,7 @@ namespace cpplargeringbuffer
             - All items stored are destroyed.
             - Clear is not called on the items.
             - The new configuration is applied.
+            - if number_of_segments is 0 the segment_size is not configured.
         */
         void discard_and_change_configuration(size_t number_of_segments, size_t segment_size)
         {
@@ -451,6 +440,7 @@ namespace cpplargeringbuffer
                                              This value is automatically determined from maximum_number_of_items if set to 0.
             \param[in] segment_size          The size of a segment in number of items stored.
                                              All items are constructed and destroyed at the same time when needed.
+                                             This value is automatically determined from maximum_number_of_items if set to 0.
             \param[in] maximum_number_of_items The maximum number of items that shall be stored at the same time.
                                                This number can be smaller than number_of_segments * segment_size.
             \param[in] fixed_segment_allocation If set to true ringbuffer segments used for storing items are not freed when items are removed.
@@ -463,20 +453,31 @@ namespace cpplargeringbuffer
         */
         void discard_and_change_configuration(size_t number_of_segments, size_t segment_size, size_t maximum_number_of_items, bool fixed_segment_allocation = false, bool preallocate_segments = false)
         {
-            m_segments.clear();
+            {
+                std::vector< std::vector<value_type> > temp;
+                m_segments.swap(temp);
+            }
             m_start_index = 0;
             m_end_index = 0;
             m_max_num_items = 0;
             m_current_num_items = 0;
+            m_segment_size = segment_size;
             m_max_size = 0;
-            m_segment_size = 0;
             m_fixed_segment_allocation = fixed_segment_allocation;
-            if (segment_size == 0 || maximum_number_of_items == 0)
+            if (maximum_number_of_items == 0)
             {
                 //nothing to do here; usable size will be zero
             }
             else
             {
+                if (segment_size == 0 && number_of_segments == 0)
+                {
+                    segment_size = determine_segment_size(maximum_number_of_items);
+                }
+                else if (segment_size == 0)
+                {
+                    segment_size = maximum_number_of_items / number_of_segments + ((maximum_number_of_items % number_of_segments) ? 1 : 0);
+                }
                 if (number_of_segments == 0)
                 {
                     number_of_segments = maximum_number_of_items / segment_size + ((maximum_number_of_items % segment_size) ? 1 : 0);
@@ -494,6 +495,26 @@ namespace cpplargeringbuffer
                     this->preallocate_segments();
                 }
             }
+        }
+
+        /**
+            \brief Discard data and configuration.
+
+            \post
+            - All items stored are destroyed.
+            - Clear is not called on the items.
+        */
+        void discard()
+        {
+            std::vector< std::vector<value_type> > temp;
+            m_segments.swap(temp);
+            m_start_index = 0;
+            m_end_index = 0;
+            m_max_num_items = 0;
+            m_current_num_items = 0;
+            m_segment_size = 0;
+            m_max_size = 0;
+            m_fixed_segment_allocation = false;
         }
 
         /**
@@ -812,6 +833,25 @@ namespace cpplargeringbuffer
             {
                 segment_end = 0;
             }
+        }
+
+        static size_t determine_segment_size(size_t maximum_number_of_items)
+        {
+            constexpr size_t sizeInByteLimit = 1024 * 1024;
+            size_t new_segment_size = 10;
+            if (maximum_number_of_items >= 100000000 && ((sizeof(value_type) * 10000) <= sizeInByteLimit))
+            {
+                new_segment_size = 10000;
+            }
+            else if (maximum_number_of_items >= 1000000 && ((sizeof(value_type) * 1000) <= sizeInByteLimit))
+            {
+                new_segment_size = 1000;
+            }
+            else if (maximum_number_of_items >= 10000 && ((sizeof(value_type) * 100) <= sizeInByteLimit))
+            {
+                new_segment_size = 100;
+            }
+            return new_segment_size;
         }
 
         bool can_remove_segments() const

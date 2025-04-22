@@ -692,6 +692,37 @@ TEST_CASE("large_ring_buffer configure 2", "[large_ring_buffer]")
         CHECK(testee.get_fixed_segment_allocation() == true);
         test_container_operation(testee);
     }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(8, 0, 102, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 102);
+        CHECK(testee.get_segment_size() == 13);
+        CHECK(testee.get_segment_count() == 8);
+        CHECK(testee.get_used_segments() == 8);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+    }
+    {
+        cpplargeringbuffer::large_ring_buffer<size_t> testee(0, 0, 102, true, true);
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 102);
+        CHECK(testee.get_segment_size() == 10);
+        CHECK(testee.get_segment_count() == 11);
+        CHECK(testee.get_used_segments() == 11);
+        CHECK(testee.get_fixed_segment_allocation() == true);
+        testee.discard();
+        CHECK(testee.empty());
+        CHECK(!testee.full());
+        CHECK(testee.size() == 0);
+        CHECK(testee.get_max_size() == 0);
+        CHECK(testee.get_segment_size() == 0);
+        CHECK(testee.get_segment_count() == 0);
+        CHECK(testee.get_used_segments() == 0);
+        CHECK(testee.get_fixed_segment_allocation() == false);
+    }
 }
 
 inline void test_fill(cpplargeringbuffer::large_ring_buffer<size_t>& testee, size_t offset, size_t count)
