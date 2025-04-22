@@ -9,8 +9,7 @@
 int main()
 {
     // create a ring buffer that stores up to 5000000 items
-    // memory is allocated in batches of 1000 items
-    cpplargeringbuffer::large_ring_buffer<int> ringbuffer(5000, 1000);
+    cpplargeringbuffer::large_ring_buffer<int> ringbuffer(5000000);
 
     // you can add to front and back
     ringbuffer.push_back(1);
